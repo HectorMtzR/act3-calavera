@@ -14,7 +14,7 @@ Simetría: los elementos se construyen con los landmarks del lado DERECHO de la 
 el lado izquierdo usa sus pares reflejados (Face.mirror).
 
 Capas (grupos con nombre, editables en Inkscape / Figma / Illustrator):
-    base, frente, mejillas, menton, nariz, boca, ojos, transparencias, referencia
+    base, huesos (sombreado de cráneo), frente, mejillas, menton, nariz, boca, ojos, transparencias, referencia
 `transparencias` marca en magenta los huecos exactos de ojos y boca: 04_rasterize.py los
 recorta del alfa. `referencia` (oculta) muestra la guía UV para retocar a mano.
 """
@@ -35,6 +35,9 @@ PREVIEW = os.path.join(ROOT, "docs", "textura", "03_diseno.png")
 BONE = "#f4efe6"
 INK = "#1b1b1b"
 HOLE = "#ff00ff"  # marcador de la capa transparencias (no es color de la textura)
+BONE_EDGE = "#dcd1bf"   # hueso hacia los bordes (degradado de la base)
+SHADOW = "#7d7264"      # sombras de la capa huesos
+TOOTH = "#ece3d0"       # dientes
 
 PALETTES = {
     "calavera": {
@@ -59,10 +62,15 @@ FLOWER = {"radius": 0.42, "rise": 0.14}            # rise: altura entre ceja y �
 PICADO = {"inset": 0.20, "cut": 0.42, "width": 0.36, "height": 0.34, "gap": 0.06,
           "string": 0.022}
 MOUTH = {"line": 0.045, "teeth": 9, "tooth_ext": 0.13, "ext_len": 0.55, "ext_rise": 0.10,
-         "ext_ticks": 3}
+         "ext_ticks": 3, "teeth_ext": 0.07}
 CHEEK = {"out": 0.32, "spiral": 0.27, "turns": 1.55, "stroke": 0.058, "dot": 0.072}
 CHIN = {"at": 0.47, "petal": 0.22, "curl": 0.14, "stroke": 0.048}
 NOSE = {"width": 0.92, "drop": 0.04}
+# Sombreado óseo: (desenfoque en EW, opacidad). "teeth": dientes color hueso sobre los
+# labios (más calavera); False = labios oscuros.
+BONES = {"orbit": 0.16, "orbit_shade": (0.10, 0.55), "hollow_shade": (0.16, 0.65), "hollow_width": 0.30,
+         "temple_shade": (0.12, 0.30), "nose_shade": (0.07, 0.45), "jaw_shade": (0.12, 0.28),
+         "chin_shade": (0.07, 0.28), "line": 0.022, "line_opacity": 0.45, "teeth": True}
 
 
 # ---------- Geometría ----------
@@ -183,6 +191,14 @@ def spiral_pts(center, r0, r1, a0, turns, sx, n=90):
 class Svg:
     def __init__(self):
         self.layers = {}
+        self.defs = {}
+
+    def blur(self, std):
+        """Id de un filtro de desenfoque gaussiano (se declara una vez en <defs>)."""
+        fid = f"desenfoque-{int(round(std))}"
+        self.defs[fid] = (f'<filter id="{fid}" x="-50%" y="-50%" width="200%" height="200%">'
+                          f'<feGaussianBlur stdDeviation="{std:.1f}"/></filter>')
+        return fid
 
     def add(self, layer, element):
         self.layers.setdefault(layer, []).append(element)
@@ -205,6 +221,8 @@ class Svg:
             "       Capa transparencias: lo magenta se vuelve hueco (ojos y boca).",
             "       Capa referencia: guía UV oculta, solo para editar; no se exporta. -->",
         ]
+        if self.defs:
+            out += ["  <defs>"] + [f"    {d}" for d in self.defs.values()] + ["  </defs>"]
         for name in order:
             extra = ""
             if name == "referencia":
@@ -255,6 +273,7 @@ class Design:
     def build(self, pal):
         svg = Svg()
         self.base(svg)
+        self.bones(svg)
         self.forehead(svg, pal)
         for side in self.sides:
             self.cheek(svg, pal, side)
@@ -270,7 +289,86 @@ class Design:
 
     # base: blanco hueso en todo el contorno de la cara
     def base(self, svg):
-        svg.path("base", bezier_d(resample(self.oval, 72)), fill=BONE, extra='id="hueso"')
+        c = self.face.px(self.face.nose_tip)
+        r = np.linalg.norm(self.oval - c, axis=1).max()
+        svg.defs["degradado-hueso"] = (
+            f'<radialGradient id="degradado-hueso" gradientUnits="userSpaceOnUse" cx="{c[0]:.1f}" '
+            f'cy="{c[1]:.1f}" r="{r:.1f}"><stop offset="0.55" stop-color="{BONE}"/>'
+            f'<stop offset="1" stop-color="{BONE_EDGE}"/></radialGradient>')
+        svg.path("base", bezier_d(resample(self.oval, 72)), fill="url(#degradado-hueso)", extra='id="hueso"')
+
+    def oval_arc(self, keep):
+        """Tramo contiguo del óvalo donde `keep` es verdadero, en orden a lo largo de la curva."""
+        start = int(np.argmax(~keep))
+        idx = np.roll(np.arange(len(self.oval)), -start)
+        return self.oval[idx][keep[idx]]
+
+    def oval_at(self, side, y):
+        """Punto del óvalo de ese lado con la altura más cercana a y."""
+        o = self.oval[(self.oval[:, 0] - SIZE / 2) * side.sx > 0]
+        return o[np.argmin(np.abs(o[:, 1] - y))]
+
+    # huesos: sombras suaves y líneas que dan volumen de cráneo
+    def bones(self, svg):
+        face, EW, B = self.face, self.EW, BONES
+        P = face.px
+
+        def shade(d, key, name):
+            blur, opacity = B[key]
+            svg.path("huesos", d, fill=SHADOW, extra=f'id="{name}" opacity="{opacity}" '
+                                                     f'filter="url(#{svg.blur(blur * EW)})"')
+
+        def line(pts, name):
+            svg.path("huesos", bezier_d(resample(catmull(pts, False, 12), 10, closed=False), closed=False),
+                     stroke=SHADOW, width=B["line"] * EW, extra=f'id="{name}" opacity="{B["line_opacity"]}"')
+
+        def ellipse_d(c, rx, ry):
+            return (f"M{c[0] - rx:.1f},{c[1]:.1f}a{rx:.1f},{ry:.1f} 0 1,0 {2 * rx:.1f},0"
+                    f"a{rx:.1f},{ry:.1f} 0 1,0 {-2 * rx:.1f},0Z")
+
+        nos = P(face.nostrils)
+        lips = P(face.lips_outer)
+        for side in self.sides:
+            sx, n = side.sx, side.name
+            ex = np.array([sx * EW, 0.0])   # "hacia afuera" de ese lado
+            ey = np.array([0.0, EW])        # hacia abajo
+            sock = self.socket(side)
+            # Órbita: sombra alrededor de la cuenca.
+            shade(bezier_d(resample(sock + normals(sock) * B["orbit"] * EW, 32)), "orbit_shade", f"orbita-{n}")
+
+            # Pómulo: hundimiento bajo el arco cigomático, una banda diagonal difusa que baja
+            # desde cerca de la oreja hacia la comisura.
+            mouth = side.P(self.mouth_corner["right"])
+            below = sock[np.argmax(sx * sock[:, 0] + sock[:, 1])]       # abajo y afuera de la cuenca
+            ear = self.oval_at(side, lerp(below[1], mouth[1], 0.35)) - 0.15 * ex
+            near_mouth = mouth + 0.35 * ex - 0.10 * ey
+            c, axis = lerp(ear, near_mouth, 0.5), near_mouth - ear
+            half = np.linalg.norm(axis) / 2
+            blur, opacity = B["hollow_shade"]
+            svg.path("huesos", ellipse_d((0, 0), half, B["hollow_width"] * EW), fill=SHADOW,
+                     extra=f'id="pomulo-{n}" opacity="{opacity}" filter="url(#{svg.blur(blur * EW)})" '
+                           f'transform="{place(*c, math.atan2(axis[1], axis[0]))}"')
+
+            # Sien: hundimiento junto al extremo de la ceja.
+            brow_out = side.P(face.brow_upper["right"])[-1]
+            c = lerp(brow_out, self.oval_at(side, brow_out[1]), 0.55) - 0.1 * ey
+            shade(ellipse_d(c, 0.30 * EW, 0.55 * EW), "temple_shade", f"sien-{n}")
+
+            # Maxilar: de la aleta de la nariz hacia la comisura.
+            wing = nos[np.argmax(sx * nos[:, 0])]
+            line([wing + 0.06 * ex + 0.04 * ey, lerp(wing, mouth, 0.55) + 0.22 * ex,
+                  mouth + 0.30 * ex - 0.22 * ey], f"maxilar-{n}")
+
+        # Cavidad nasal: sombra alrededor del corazón.
+        shade(self.heart_d(1.3), "nose_shade", "cavidad-nasal")
+        # Mandíbula: banda a lo largo del óvalo, por debajo de la boca.
+        jaw = self.oval_arc(self.oval[:, 1] > lips[:, 1].mean())
+        blur, opacity = B["jaw_shade"]
+        svg.path("huesos", bezier_d(resample(jaw, 20, closed=False), closed=False), stroke=SHADOW,
+                 width=0.45 * EW, extra=f'id="mandibula" opacity="{opacity}" filter="url(#{svg.blur(blur * EW)})"')
+        # Mentón: sombra bajo el labio inferior.
+        c = np.array([lips[:, 0].mean(), lips[:, 1].max() + 0.20 * EW])
+        shade(ellipse_d(c, 0.45 * EW, 0.12 * EW), "chin_shade", "menton-sombra")
 
     # ojos: cuenca negra que sigue el contorno del ojo + anillo de pétalos
     def socket(self, side):
@@ -307,6 +405,10 @@ class Design:
 
     # nariz: corazón invertido (punta arriba) sobre la punta y las aletas
     def nose(self, svg):
+        svg.path("nariz", self.heart_d(), fill=INK, extra='id="corazon"')
+
+    def heart_d(self, scale=1.0):
+        """Corazón invertido; `scale` lo agranda alrededor de su centro."""
         face, P = self.face, self.face.px
         nos = P(face.nostrils)
         bridge = face.nose_bridge
@@ -315,6 +417,10 @@ class Design:
         W = (nos[:, 0].max() - nos[:, 0].min()) / 2 * NOSE["width"]
         y0, y1 = top[1], nos[:, 1].max() + NOSE["drop"] * self.EW
         H = y1 - y0
+
+        cy = y0 + 0.6 * H
+        W, H = W * scale, H * scale
+        y0 = cy - 0.6 * H
 
         def q(x, y):
             return f"{cx + x * W:.1f},{y0 + y * H:.1f}"
@@ -325,14 +431,21 @@ class Design:
              f"C{q(0.08, 0.90)} {q(0.26, 0.98)} {q(0.50, 1.0)}"
              f"C{q(0.76, 1.02)} {q(1, 0.94)} {q(1, 0.70)}"
              f"C{q(1, 0.42)} {q(0.35, 0.28)} {q(0, 0)}Z")
-        svg.path("nariz", d, fill=INK, extra='id="corazon"')
+        return d
 
-    # boca: labios oscuros, línea extendida a las mejillas y "dientes" verticales
+    # boca: dientes sobre los labios (o labios oscuros), línea extendida a las mejillas
+    # y separaciones verticales
     def mouth(self, svg):
         face, EW = self.face, self.EW
         P = face.px
         outer = P(face.lips_outer)
-        svg.path("boca", bezier_d(outer), fill=INK, extra='id="labios"')
+        teeth_style = BONES["teeth"]
+        if teeth_style:
+            svg.path("boca", bezier_d(outer), fill=TOOTH, stroke=INK, width=0.035 * EW, extra='id="dientes-base"')
+            # Línea de la mordida: contorno interior de los labios.
+            svg.path("boca", bezier_d(P(face.lips_inner)), stroke=INK, width=0.04 * EW, extra='id="mordida"')
+        else:
+            svg.path("boca", bezier_d(outer), fill=INK, extra='id="labios"')
 
         # Contorno exterior partido en labio superior e inferior (de comisura a comisura).
         loop = list(face.lips_outer)
@@ -343,7 +456,7 @@ class Design:
         upper, lower = upper[np.argsort(upper[:, 0])], lower[np.argsort(lower[:, 0])]
         x0, x1 = outer[:, 0].min(), outer[:, 0].max()
         width = MOUTH["line"] * EW
-        ext = MOUTH["tooth_ext"] * EW
+        ext = (MOUTH["teeth_ext"] if teeth_style else MOUTH["tooth_ext"]) * EW
         teeth = []
         for t in np.linspace(0, 1, MOUTH["teeth"] + 2)[1:-1]:
             x = x0 + (x1 - x0) * t
@@ -519,7 +632,7 @@ class Design:
         svg.path("transparencias", poly_d(P(self.face.lips_inner)), fill=HOLE, extra='id="hueco-boca"')
 
 
-LAYERS = ["base", "frente", "mejillas", "menton", "nariz", "boca", "ojos", "transparencias", "referencia"]
+LAYERS = ["base", "huesos", "frente", "mejillas", "menton", "nariz", "boca", "ojos", "transparencias", "referencia"]
 
 
 def preview(paths, out, size=1024, bg=(92, 78, 70)):
