@@ -1,5 +1,4 @@
 // Todas las constantes ajustables del filtro.
-// Para la Actividad 3 basta con cambiar este archivo (textura, gestos, efectos) y effects.js.
 
 const MEDIAPIPE_VERSION = "0.10.14";
 
@@ -9,64 +8,30 @@ export const CONFIG = {
   UV_TEMPLATE: "assets/face/uv_template.png",
   UV_GUIDE: "assets/face/uv_guide.png",        // contornos de ojos, labios, nariz y cara
 
-  // --- Máscara ---
-  MASK_SHEET: "assets/mask/lava_sheet.png",
-  SHEET_GRID: 4,             // 4x4 cuadros
-  SHEET_FRAMES: 16,
-  MASK_FPS: 8,
-  MASK_BLEND: true,          // funde cada cuadro con el siguiente (flujo suave a 8 fps)
-  // true = ojos y boca también cubiertos de lava (la spec pide que se vean: false).
-  MASK_COVER_EYES_MOUTH: false,
+  // --- Máscara (2048×2048 con alfa; se generan con tools/04_rasterize.py) ---
+  // Mientras no existan, se usa la plantilla UV en su lugar.
+  MASK_A: "assets/mask/calavera.png",          // paleta principal
+  MASK_B: "assets/mask/calavera_alt.png",      // paleta alternativa (gesto de cejas)
 
-  // --- Corona de flamas alrededor de la cara (alturas en "altos de cara") ---
-  FLAMES: {
-    enabled: true,
-    top: 0.9,                // sobre la frente / pelo
-    side: 0.24,              // a los lados
-    chin: 0.05,              // en la barbilla
-    inset: 0.04,             // cuánto empiezan por dentro del contorno (tapado por la máscara)
-    bend: 0.7,               // 0 = salen perpendiculares al borde, 1 = suben rectas
-    tongues: 5.0,            // tamaño del ruido alrededor del contorno (más = más lenguas)
-    speed: 1.4,              // velocidad de subida
-    eruptionGrow: 0.35,      // cuánto crecen durante la erupción
-    subdivisions: 4,         // suavizado del contorno (36 puntos × 4)
-    rows: 10,
-  },
+  // --- Suavizado de landmarks (filtro One Euro, Fase 4) ---
+  SMOOTHING: { minCutoff: 1.0, beta: 0.01 },
 
   // --- Gestos (blendshapes de MediaPipe) ---
   GESTURES: {
-    jawOpen:     { threshold: 0.5, cooldown: 1.0 },
-    browInnerUp: { threshold: 0.5, cooldown: 1.5 },
+    jawOpen:     { threshold: 0.5, cooldown: 1.0 },   // lluvia de pétalos
+    browInnerUp: { threshold: 0.5, cooldown: 1.5 },   // cambio de paleta
   },
   // Histéresis: tras disparar, el gesto se rearma cuando baja de threshold * GESTURE_RELEASE.
   GESTURE_RELEASE: 0.8,
 
-  // --- Efectos ---
-  ERUPTION: {
-    glowPeak: 2.5,
-    duration: 1.0,           // s, curva del brillo
-    particles: 60,
-    spawnTime: 0.8,          // s emitiendo brasas desde la boca
-    life: [0.6, 1.1],        // s de vida de cada brasa
-    size: [0.2, 0.45],       // tamaño de la brasa (fracción del ancho de los ojos)
-    speed: [2.6, 5.0],       // velocidad (anchos de ojos por segundo)
-    spread: 1.3,             // rad a cada lado de "arriba de la cara"
-    gravity: 4.0,            // anchos de ojos / s²
-    flash: 0.55,             // opacidad máxima del destello naranja en los bordes
-  },
-  HEAT: { duration: 1.5 },
-  EMBER_SPRITE: "assets/particles/ember.png",
+  // --- Efectos (Fase 5) ---
+  PETALS: { count: 80, duration: 2.0 },
+  PALETTE_TRANSITION: 0.6,     // s
 
   // --- Audio ---
-  AMBIENT_VOLUME: 0.25,
   EFFECT_VOLUME: 0.9,
-  // Archivos de sonido opcionales (p. ej. "assets/sounds/eruption.mp3").
-  // Con null se usa el sonido sintetizado con Web Audio.
-  SOUNDS: {
-    ambient_fire: null,
-    eruption: null,
-    sizzle: null,
-  },
+  // Archivos de sonido por nombre de efecto (p. ej. petals: "assets/sounds/petals.mp3").
+  SOUNDS: {},
 
   // --- MediaPipe Face Landmarker ---
   MEDIAPIPE: {
@@ -87,6 +52,6 @@ export const CONFIG = {
   },
 
   // --- Depuración (?debug=1) ---
-  DEBUG_POINT_SIZE: 3,       // px, puntos de landmarks (Fase 1)
+  DEBUG_POINT_SIZE: 3,       // px, puntos de landmarks
   DEBUG_POINT_COLOR: 0x00ff88,
 };

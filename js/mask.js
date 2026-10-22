@@ -1,6 +1,6 @@
 // Malla facial three.js: triángulos y UVs fijos de la malla canónica de MediaPipe,
 // posiciones actualizadas cada cuadro con los landmarks detectados.
-// La textura es una sprite sheet animada que se dibuja con un ShaderMaterial.
+// El shader mezcla dos texturas (paleta principal y alternativa) con `uMix`.
 import * as THREE from "three";
 import { CONFIG } from "./config.js";
 
@@ -39,6 +39,16 @@ async function loadTexture(url) {
   return tex;
 }
 
+/** Carga la textura; si no existe todavía, usa la plantilla UV. */
+async function loadTextureOrTemplate(url) {
+  try {
+    return await loadTexture(url);
+  } catch (err) {
+    console.warn(`[mask] no se pudo cargar ${url}; se usa la plantilla UV`, err);
+    return loadTexture(CONFIG.UV_TEMPLATE);
+  }
+}
+
 const vertexShader = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -48,61 +58,33 @@ const vertexShader = /* glsl */ `
 `;
 
 const fragmentShader = /* glsl */ `
-  uniform sampler2D uSheet;
-  uniform float uFrame;   // cuadro actual; la parte decimal funde con el siguiente
-  uniform float uGrid;    // cuadros por lado (4 => 4x4)
-  uniform float uFrames;  // total de cuadros
-  uniform float uBlend;   // 1 = fundido entre cuadros, 0 = cuadros duros
-  uniform float uInset;   // margen dentro de cada cuadro (evita mezclar con el vecino)
-  uniform float uGlow;    // 1 normal, sube con la erupción
-  uniform float uHeat;    // 0..1, lleva la lava hacia amarillo-blanco
-  uniform float uCover;   // 1 = ignora la transparencia de ojos y boca (lava debajo)
+  uniform sampler2D uMaskA;  // paleta principal
+  uniform sampler2D uMaskB;  // paleta alternativa
+  uniform float uMix;        // 0 = A, 1 = B
   varying vec2 vUv;
 
-  // UV dentro de la sprite sheet. El cuadro 0 está arriba a la izquierda.
-  vec2 frameUv(float frame, vec2 uv) {
-    float col = mod(frame, uGrid);
-    float row = floor(frame / uGrid);
-    uv = clamp(uv, uInset, 1.0 - uInset);
-    return vec2(col + uv.x, uGrid - 1.0 - row + uv.y) / uGrid;
-  }
-
   void main() {
-    float f0 = mod(floor(uFrame), uFrames);
-    float f1 = mod(f0 + 1.0, uFrames);
-    vec4 a = texture2D(uSheet, frameUv(f0, vUv));
-    vec4 b = texture2D(uSheet, frameUv(f1, vUv));
-    vec4 c = mix(a, b, fract(uFrame) * uBlend);
-
-    // Máscara de lava: la roca es oscura (canal rojo bajo); las grietas, brillantes.
-    float lava = smoothstep(0.08, 0.6, c.r);
-    vec3 rgb = c.rgb * mix(1.0, uGlow, lava);
-    // Calor: solo el núcleo de las grietas pasa a amarillo y lo más caliente a casi blanco.
-    float core = smoothstep(0.25, 0.9, c.r);
-    vec3 hot = mix(vec3(1.0, 0.72, 0.16), vec3(1.0, 0.96, 0.82), core) * max(1.0, uGlow);
-    rgb = mix(rgb, hot, uHeat * core);
-
-    // Toda la malla cae dentro de la isla UV; los únicos huecos son ojos y boca,
-    // y debajo de ellos el bake también tiene lava.
-    float alpha = max(c.a, uCover);
-    if (alpha < 0.01) discard;
-    gl_FragColor = vec4(rgb, alpha);
+    vec4 c = mix(texture2D(uMaskA, vUv), texture2D(uMaskB, vUv), uMix);
+    // Los huecos de ojos y boca vienen en el alfa de la textura.
+    if (c.a < 0.01) discard;
+    gl_FragColor = c;
     #include <colorspace_fragment>
   }
 `;
 
 /**
  * Crea la máscara y la agrega a la escena (oculta hasta que haya rostro).
- * `sheet`: { url, grid, frames }. Con grid = frames = 1 se dibuja una imagen fija.
- * Devuelve { mesh, uniforms, update(landmarks, landmarkToWorld), tick(timeSec), hide() }.
+ * `textures`: { a, b } rutas de las dos paletas (pueden ser la misma).
+ * Devuelve { mesh, uniforms, update(landmarks, landmarkToWorld), hide() }.
  */
-export async function createMask(scene, sheet) {
-  const [objText, texture] = await Promise.all([
+export async function createMask(scene, textures) {
+  const [objText, texA, texB] = await Promise.all([
     fetch(CONFIG.FACE_MODEL).then((r) => {
       if (!r.ok) throw new Error(`No se pudo cargar ${CONFIG.FACE_MODEL} (${r.status})`);
       return r.text();
     }),
-    loadTexture(sheet.url),
+    loadTextureOrTemplate(textures.a),
+    textures.b === textures.a ? null : loadTextureOrTemplate(textures.b),
   ]);
   const { numVerts, uvs, indices } = parseCanonicalObj(objText);
 
@@ -112,17 +94,10 @@ export async function createMask(scene, sheet) {
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
-  const frameSize = texture.image.width / sheet.grid;
   const uniforms = {
-    uSheet: { value: texture },
-    uFrame: { value: 0 },
-    uGrid: { value: sheet.grid },
-    uFrames: { value: sheet.frames },
-    uBlend: { value: CONFIG.MASK_BLEND ? 1 : 0 },
-    uInset: { value: 0.5 / frameSize },
-    uGlow: { value: 1 },
-    uHeat: { value: 0 },
-    uCover: { value: CONFIG.MASK_COVER_EYES_MOUTH ? 1 : 0 },
+    uMaskA: { value: texA },
+    uMaskB: { value: texB ?? texA },
+    uMix: { value: 0 },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -146,14 +121,9 @@ export async function createMask(scene, sheet) {
     mesh.visible = true;
   }
 
-  /** Avanza la animación; `timeSec` es el tiempo global en segundos. */
-  function tick(timeSec) {
-    uniforms.uFrame.value = (timeSec * CONFIG.MASK_FPS) % sheet.frames;
-  }
-
   function hide() {
     mesh.visible = false;
   }
 
-  return { mesh, uniforms, update, tick, hide };
+  return { mesh, uniforms, update, hide };
 }

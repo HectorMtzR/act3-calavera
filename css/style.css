@@ -32,15 +32,6 @@ body {
   transform: scaleX(-1); /* espejo tipo selfie (la malla se invierte en scene.js) */
 }
 
-/* Destello naranja en los bordes durante la erupción (opacidad desde effects.js). */
-.flash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0;
-  background: radial-gradient(ellipse at center, rgba(255, 90, 0, 0) 55%, rgba(255, 90, 0, 0.9) 100%);
-}
-
 [hidden] {
   display: none !important;
 }

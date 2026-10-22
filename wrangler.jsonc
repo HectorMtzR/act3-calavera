@@ -3,7 +3,7 @@
 // Probar local: npx wrangler dev
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "mascara-lava-ar",
+  "name": "calavera-ar",
   "compatibility_date": "2026-10-01",
   "assets": {
     // Se publica la raíz del repo; lo que no es del sitio se excluye en .assetsignore

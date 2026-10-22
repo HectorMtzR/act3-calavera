@@ -6,8 +6,7 @@ import { createScene } from "./scene.js";
 import { createMask } from "./mask.js";
 import { createGestureDetector } from "./gestures.js";
 import { createEffects } from "./effects.js";
-import { createFlames } from "./flames.js";
-import { unlockAudio, isUnlocked, setMuted, isMuted, startAmbient } from "./audio.js";
+import { unlockAudio, isUnlocked, setMuted, isMuted } from "./audio.js";
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get("debug") === "1";
@@ -15,9 +14,9 @@ const DEBUG = params.get("debug") === "1";
 // en lugar de la máscara (para revisar la alineación).
 const STATIC_TEXTURE = params.get("guide") === "1" ? CONFIG.UV_GUIDE
   : params.get("template") === "1" ? CONFIG.UV_TEMPLATE : null;
-const MASK_SHEET = STATIC_TEXTURE
-  ? { url: STATIC_TEXTURE, grid: 1, frames: 1 }
-  : { url: CONFIG.MASK_SHEET, grid: CONFIG.SHEET_GRID, frames: CONFIG.SHEET_FRAMES };
+const MASK_TEXTURES = STATIC_TEXTURE
+  ? { a: STATIC_TEXTURE, b: STATIC_TEXTURE }
+  : { a: CONFIG.MASK_A, b: CONFIG.MASK_B };
 const NUM_MESH_POINTS = 478; // 468 de la cara + 10 del iris
 
 const video = document.getElementById("video");
@@ -29,7 +28,6 @@ const ui = {
   hint: document.getElementById("hint"),
   sound: document.getElementById("sound"),
   debug: document.getElementById("debug"),
-  flash: document.getElementById("flash"),
 };
 
 function show(el, visible) {
@@ -116,7 +114,7 @@ function updateLandmarkPoints(points, landmarks, toWorld) {
 
 // ---------- Sonido ----------
 // Los navegadores no permiten audio sin interacción: el primer toque (en cualquier parte
-// o en el botón) desbloquea el audio, lo enciende y arranca el fuego ambiente.
+// o en el botón) desbloquea el audio y lo enciende.
 function setupAudio() {
   const refresh = () => {
     ui.sound.textContent = isMuted() ? "🔇" : "🔊";
@@ -125,7 +123,6 @@ function setupAudio() {
   const enable = async () => {
     if (!(await unlockAudio())) return;
     setMuted(false);
-    startAmbient();
     refresh();
   };
   const firstTouch = (e) => {
@@ -175,7 +172,7 @@ function createDebugPanel(delegate, gestures) {
       const g = gestures.state[name];
       lines.push(`${name.padEnd(11)} ${g.value.toFixed(2)} ${meter(g.value, threshold)} ×${g.count}`);
     }
-    lines.push("", "teclas: E erupción · H calor");
+    lines.push("", "teclas: B pétalos · P paleta");
     ui.debug.textContent = lines.join("\n");
   };
 }
@@ -187,9 +184,9 @@ async function main() {
   // La cámara, el modelo y la malla se cargan en paralelo.
   const view = createScene(canvas, video);
   const trackerPromise = createFaceTracker();
-  const maskPromise = createMask(view.scene, MASK_SHEET);
+  const maskPromise = createMask(view.scene, MASK_TEXTURES);
   const effectsPromise = maskPromise.then((mask) =>
-    createEffects({ scene: view.scene, renderer: view.renderer, mask, flash: ui.flash })
+    createEffects({ scene: view.scene, renderer: view.renderer, mask })
   );
   // Los errores se manejan abajo, después de la cámara.
   trackerPromise.catch(() => {});
@@ -225,7 +222,6 @@ async function main() {
   view.resize(); // el video ya tiene tamaño real
 
   const gestures = createGestureDetector();
-  const flames = CONFIG.FLAMES.enabled ? createFlames(view.scene, mask.uniforms) : null;
   const points = DEBUG ? createLandmarkPoints() : null;
   if (points) view.scene.add(points);
   const updateDebug = createDebugPanel(tracker.delegate, gestures);
@@ -233,24 +229,20 @@ async function main() {
     // Disparar los efectos con el teclado, sin hacer el gesto.
     window.addEventListener("keydown", (e) => {
       const t = performance.now() / 1000;
-      if (e.key === "e") effects.trigger("jawOpen", t);
-      if (e.key === "h") effects.trigger("browInnerUp", t);
+      if (e.key === "b") effects.trigger("jawOpen", t);
+      if (e.key === "p") effects.trigger("browInnerUp", t);
     });
   }
 
   function frame(timeMs) {
     const t = timeMs / 1000;
     const face = tracker.detect(video, timeMs);
-    mask.tick(t);
-    flames?.tick(t);
     if (face) {
       mask.update(face.landmarks, view.landmarkToWorld);
-      flames?.update(face.landmarks, view.landmarkToWorld);
       for (const gesture of gestures.update(face.blendshapes, t)) effects.trigger(gesture, t);
       if (points) updateLandmarkPoints(points, face.landmarks, view.landmarkToWorld);
     } else {
       mask.hide();
-      flames?.hide();
       gestures.reset();
     }
     effects.update(t, face ? face.landmarks : null, view.landmarkToWorld);
