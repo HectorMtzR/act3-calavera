@@ -14,7 +14,7 @@ Simetría: los elementos se construyen con los landmarks del lado DERECHO de la 
 el lado izquierdo usa sus pares reflejados (Face.mirror).
 
 Capas (grupos con nombre, editables en Inkscape / Figma / Illustrator):
-    base, huesos (sombreado de cráneo), frente, mejillas, menton, nariz, boca, ojos, transparencias, referencia
+    base, huesos (sombreado), craneo (silueta y líneas óseas), frente, mejillas, menton, nariz, boca, ojos, transparencias, referencia
 `transparencias` marca en magenta los huecos exactos de ojos y boca: 04_rasterize.py los
 recorta del alfa. `referencia` (oculta) muestra la guía UV para retocar a mano.
 """
@@ -37,7 +37,10 @@ INK = "#1b1b1b"
 HOLE = "#ff00ff"  # marcador de la capa transparencias (no es color de la textura)
 BONE_EDGE = "#dcd1bf"   # hueso hacia los bordes (degradado de la base)
 SHADOW = "#7d7264"      # sombras de la capa huesos
-TOOTH = "#ece3d0"       # dientes
+TOOTH = "#fbf8f1"       # dientes (más claros que el hueso para que destaquen)
+HOLLOW = "#2b2520"      # hundimiento fuera de la mandíbula
+LEAF = ("#2f8f3a", "#7cc242")   # hojas (oscura, clara)
+VINE = "#2f7d32"
 
 PALETTES = {
     "calavera": {
@@ -63,14 +66,20 @@ PICADO = {"inset": 0.20, "cut": 0.42, "width": 0.36, "height": 0.34, "gap": 0.06
           "string": 0.022}
 MOUTH = {"line": 0.045, "teeth": 9, "tooth_ext": 0.13, "ext_len": 0.55, "ext_rise": 0.10,
          "ext_ticks": 3, "teeth_ext": 0.07}
-CHEEK = {"out": 0.32, "spiral": 0.27, "turns": 1.55, "stroke": 0.058, "dot": 0.072}
+CHEEK = {"out": 0.68, "spiral": 0.27, "turns": 1.55, "stroke": 0.058, "dot": 0.072}
 CHIN = {"at": 0.47, "petal": 0.22, "curl": 0.14, "stroke": 0.048}
 NOSE = {"width": 0.92, "drop": 0.04}
 # Sombreado óseo: (desenfoque en EW, opacidad). "teeth": dientes color hueso sobre los
 # labios (más calavera); False = labios oscuros.
-BONES = {"orbit": 0.16, "orbit_shade": (0.10, 0.55), "hollow_shade": (0.16, 0.65), "hollow_width": 0.30,
-         "temple_shade": (0.12, 0.30), "nose_shade": (0.07, 0.45), "jaw_shade": (0.12, 0.28),
-         "chin_shade": (0.07, 0.28), "line": 0.022, "line_opacity": 0.45, "teeth": True}
+BONES = {"orbit": 0.16, "orbit_shade": (0.10, 0.55), "temple_shade": (0.12, 0.15),
+         "nose_shade": (0.07, 0.45), "chin_shade": (0.07, 0.28), "teeth": True}
+# Estructura del cráneo (en EW): silueta con pómulo saliente, muesca y mandíbula más
+# angosta que la cara; "*_in" = cuánto entra la silueta desde el contorno de la cara.
+SKULL = {"outline": (0.01, 0.065, 0.05), "temple_in": 0.55, "cheek_in": 0.62, "jaw_in": 1.05,
+         "chin_in": 0.30, "hollow_opacity": 0.5, "line": (0.055, 0.008),
+         "zygo_len": 0.55, "maxilla_len": 0.62}
+TEETH = {"count": 8, "ext": 0.16, "gap": 0.035}
+VINES = {"leaves": 0.75, "leaf_w": 0.32, "stroke": 0.03}
 
 
 # ---------- Geometría ----------
@@ -179,6 +188,29 @@ def ruffled_ring_petal(r0, r1, half_angle):
     return "".join(d)
 
 
+def leaf_d(length, width):
+    """Hoja apuntando a +x con la base en el origen."""
+    L, W = length, width
+    return (f"M0,0C{0.30 * L:.1f},{-W:.1f} {0.72 * L:.1f},{-0.9 * W:.1f} {L:.1f},0"
+            f"C{0.72 * L:.1f},{0.9 * W:.1f} {0.30 * L:.1f},{W:.1f} 0,0Z")
+
+
+def profile(n, w0, wm, w1):
+    """Anchos a lo largo de un trazo: w0 al inicio, wm a la mitad, w1 al final."""
+    t = np.linspace(0, 1, n)
+    return w0 + (w1 - w0) * t + (wm - (w0 + w1) / 2) * 4 * t * (1 - t)
+
+
+def tapered_d(pts, widths):
+    """Trazo relleno de ancho variable (como pincel): se adelgaza donde `widths` es chico."""
+    P = np.asarray(pts, float)
+    w = np.asarray(widths, float)[:, None] / 2
+    t = np.gradient(P, axis=0)
+    t /= np.linalg.norm(t, axis=1, keepdims=True)
+    perp = np.stack([-t[:, 1], t[:, 0]], axis=1)
+    return bezier_d(np.vstack([P + perp * w, (P - perp * w)[::-1]]))
+
+
 def spiral_pts(center, r0, r1, a0, turns, sx, n=90):
     """Espiral de Arquímedes; sx = -1 la refleja para el lado opuesto."""
     s = np.linspace(0, 1, n)
@@ -264,6 +296,8 @@ class Design:
 
         P = face.px
         self.oval = catmull(P(face.oval), True, 16)
+        self.cx = float(P(face.nose_bridge)[:, 0].mean())   # eje de simetría
+        self._skull = {}
         lips = P(face.lips_outer)
         self.mouth_corner = {
             "right": face.lips_outer[int(lips[:, 0].argmin())],
@@ -274,6 +308,7 @@ class Design:
         svg = Svg()
         self.base(svg)
         self.bones(svg)
+        self.skull(svg)
         self.forehead(svg, pal)
         for side in self.sides:
             self.cheek(svg, pal, side)
@@ -326,49 +361,99 @@ class Design:
             return (f"M{c[0] - rx:.1f},{c[1]:.1f}a{rx:.1f},{ry:.1f} 0 1,0 {2 * rx:.1f},0"
                     f"a{rx:.1f},{ry:.1f} 0 1,0 {-2 * rx:.1f},0Z")
 
-        nos = P(face.nostrils)
         lips = P(face.lips_outer)
         for side in self.sides:
-            sx, n = side.sx, side.name
-            ex = np.array([sx * EW, 0.0])   # "hacia afuera" de ese lado
+            n = side.name
             ey = np.array([0.0, EW])        # hacia abajo
             sock = self.socket(side)
             # Órbita: sombra alrededor de la cuenca.
             shade(bezier_d(resample(sock + normals(sock) * B["orbit"] * EW, 32)), "orbit_shade", f"orbita-{n}")
-
-            # Pómulo: hundimiento bajo el arco cigomático, una banda diagonal difusa que baja
-            # desde cerca de la oreja hacia la comisura.
-            mouth = side.P(self.mouth_corner["right"])
-            below = sock[np.argmax(sx * sock[:, 0] + sock[:, 1])]       # abajo y afuera de la cuenca
-            ear = self.oval_at(side, lerp(below[1], mouth[1], 0.35)) - 0.15 * ex
-            near_mouth = mouth + 0.35 * ex - 0.10 * ey
-            c, axis = lerp(ear, near_mouth, 0.5), near_mouth - ear
-            half = np.linalg.norm(axis) / 2
-            blur, opacity = B["hollow_shade"]
-            svg.path("huesos", ellipse_d((0, 0), half, B["hollow_width"] * EW), fill=SHADOW,
-                     extra=f'id="pomulo-{n}" opacity="{opacity}" filter="url(#{svg.blur(blur * EW)})" '
-                           f'transform="{place(*c, math.atan2(axis[1], axis[0]))}"')
 
             # Sien: hundimiento junto al extremo de la ceja.
             brow_out = side.P(face.brow_upper["right"])[-1]
             c = lerp(brow_out, self.oval_at(side, brow_out[1]), 0.55) - 0.1 * ey
             shade(ellipse_d(c, 0.30 * EW, 0.55 * EW), "temple_shade", f"sien-{n}")
 
-            # Maxilar: de la aleta de la nariz hacia la comisura.
-            wing = nos[np.argmax(sx * nos[:, 0])]
-            line([wing + 0.06 * ex + 0.04 * ey, lerp(wing, mouth, 0.55) + 0.22 * ex,
-                  mouth + 0.30 * ex - 0.22 * ey], f"maxilar-{n}")
-
         # Cavidad nasal: sombra alrededor del corazón.
         shade(self.heart_d(1.3), "nose_shade", "cavidad-nasal")
-        # Mandíbula: banda a lo largo del óvalo, por debajo de la boca.
-        jaw = self.oval_arc(self.oval[:, 1] > lips[:, 1].mean())
-        blur, opacity = B["jaw_shade"]
-        svg.path("huesos", bezier_d(resample(jaw, 20, closed=False), closed=False), stroke=SHADOW,
-                 width=0.45 * EW, extra=f'id="mandibula" opacity="{opacity}" filter="url(#{svg.blur(blur * EW)})"')
         # Mentón: sombra bajo el labio inferior.
         c = np.array([lips[:, 0].mean(), lips[:, 1].max() + 0.20 * EW])
         shade(ellipse_d(c, 0.45 * EW, 0.12 * EW), "chin_shade", "menton-sombra")
+
+    # cráneo: silueta con pómulo saliente, muesca y mandíbula más angosta, hundimiento fuera
+    # de la mandíbula y líneas del cigomático y del maxilar
+    def skull_points(self, side):
+        """Puntos clave de la silueta de ese lado (px), anclados al óvalo, la cuenca, la
+        ceja, la nariz y la boca."""
+        if side.name in self._skull:
+            return self._skull[side.name]
+        face, EW, K = self.face, self.EW, SKULL
+        P = face.px
+        sx = side.sx
+        on = normals(self.oval)                                   # hacia afuera de la cara
+        mine = (self.oval[:, 0] - self.cx) * sx >= -1
+
+        def inset_at(y, d):
+            i = np.where(mine)[0][np.argmin(np.abs(self.oval[mine, 1] - y))]
+            return self.oval[i] - on[i] * d * EW
+
+        sock = self.socket(side)
+        brow_out = side.P(face.brow_upper["right"])[-1]
+        y_notch = P(face.nostrils)[:, 1].max() + 0.05 * EW        # muesca a la altura de la base de la nariz
+        top = inset_at(lerp(self.oval[:, 1].min(), brow_out[1], 0.35), 0.12)   # arranca pegada al borde
+        temple = inset_at(brow_out[1], K["temple_in"])
+        cheek = inset_at(sock[:, 1].max() + 0.25 * EW, K["cheek_in"])
+        cheek_low = inset_at(y_notch - 0.18 * EW, K["cheek_in"])
+
+        # Mandíbula: el óvalo hacia adentro, de jaw_in en la muesca a chin_in en el mentón.
+        idx = np.where(mine & (self.oval[:, 1] >= y_notch))[0]
+        idx = idx[np.argsort(self.oval[idx, 1])]
+        y_bot = self.oval[:, 1].max()
+        t = (self.oval[idx, 1] - y_notch) / (y_bot - y_notch)
+        inset = (K["jaw_in"] + (K["chin_in"] - K["jaw_in"]) * t ** 0.6) * EW
+        jaw = self.oval[idx] - on[idx] * inset[:, None]
+        jaw = np.vstack([resample(jaw, 8, closed=False), [[self.cx, y_bot - K["chin_in"] * EW]]])
+
+        outline = resample(catmull(np.vstack([[top, temple, cheek, cheek_low], jaw]), False, 10), 80, closed=False)
+        notch = jaw[0]
+        mouth = side.P(self.mouth_corner["right"])
+        under_eye = sock[np.argmax(sock[:, 1])] + np.array([0.0, 0.15 * EW])
+        self._skull[side.name] = pts = {
+            "outline": outline, "notch": notch, "cheek": cheek, "cheek_low": cheek_low,
+            "under_eye": under_eye, "mouth": mouth, "y_notch": y_notch,
+        }
+        return pts
+
+    def skull(self, svg):
+        EW, K = self.EW, SKULL
+        for side in self.sides:
+            sx, n = side.sx, side.name
+            S = self.skull_points(side)
+            outline = S["outline"]
+
+            # Fuera del cráneo: entre la silueta y el borde de la cara (hasta fuera de la isla).
+            inner = outline
+            mine = ((self.oval[:, 0] - self.cx) * sx >= -1) & (self.oval[:, 1] >= outline[0, 1])
+            outer = self.oval[mine]
+            outer = outer[np.argsort(outer[:, 1])] + normals(self.oval)[mine][np.argsort(outer[:, 1])] * 0.3 * EW
+            svg.path("craneo", poly_d(np.vstack([inner, outer[::-1]])), fill=HOLLOW,
+                     extra=f'id="hundimiento-{n}" opacity="{K["hollow_opacity"]}"')
+
+            w0, wm, w1 = K["outline"]
+            svg.path("craneo", tapered_d(outline, profile(len(outline), w0 * EW, wm * EW, w1 * EW)),
+                     fill=INK, extra=f'id="silueta-{n}"')
+
+            # Cigomático: de la muesca hacia abajo del ojo. Maxilar: de la muesca a la comisura.
+            a, b = K["line"]
+            for name, target, frac, bend in (
+                    ("cigomatico", S["under_eye"], K["zygo_len"], np.array([0.0, 0.10 * EW])),
+                    ("maxilar", S["mouth"] + np.array([sx * 0.08 * EW, 0.0]), K["maxilla_len"],
+                     np.array([sx * 0.06 * EW, -0.06 * EW]))):
+                end = lerp(S["notch"], target, frac)
+                curve = resample(catmull([S["notch"], lerp(S["notch"], end, 0.5) + bend, end], False, 16),
+                                 30, closed=False)
+                svg.path("craneo", tapered_d(curve, profile(30, a * EW, a * 0.8 * EW, b * EW)),
+                         fill=INK, extra=f'id="{name}-{n}"')
 
     # ojos: cuenca negra que sigue el contorno del ojo + anillo de pétalos
     def socket(self, side):
@@ -439,13 +524,9 @@ class Design:
         face, EW = self.face, self.EW
         P = face.px
         outer = P(face.lips_outer)
-        teeth_style = BONES["teeth"]
-        if teeth_style:
-            svg.path("boca", bezier_d(outer), fill=TOOTH, stroke=INK, width=0.035 * EW, extra='id="dientes-base"')
-            # Línea de la mordida: contorno interior de los labios.
-            svg.path("boca", bezier_d(P(face.lips_inner)), stroke=INK, width=0.04 * EW, extra='id="mordida"')
-        else:
-            svg.path("boca", bezier_d(outer), fill=INK, extra='id="labios"')
+        if BONES["teeth"]:
+            return self.teeth(svg)
+        svg.path("boca", bezier_d(outer), fill=INK, extra='id="labios"')
 
         # Contorno exterior partido en labio superior e inferior (de comisura a comisura).
         loop = list(face.lips_outer)
@@ -456,7 +537,7 @@ class Design:
         upper, lower = upper[np.argsort(upper[:, 0])], lower[np.argsort(lower[:, 0])]
         x0, x1 = outer[:, 0].min(), outer[:, 0].max()
         width = MOUTH["line"] * EW
-        ext = (MOUTH["teeth_ext"] if teeth_style else MOUTH["tooth_ext"]) * EW
+        ext = MOUTH["tooth_ext"] * EW
         teeth = []
         for t in np.linspace(0, 1, MOUTH["teeth"] + 2)[1:-1]:
             x = x0 + (x1 - x0) * t
@@ -482,6 +563,63 @@ class Design:
                 teeth.append(f"M{f(p + n * h)}L{f(p - n * h)}")
         svg.path("boca", "".join(teeth), stroke=INK, width=width, extra='id="dientes"')
 
+    def lip_curves(self, loop):
+        """Parte un contorno de labios en mitad superior e inferior, ordenadas por x."""
+        P = self.face.px
+        pts = P(loop)
+        i0, i1 = int(pts[:, 0].argmin()), int(pts[:, 0].argmax())
+        lo, hi = sorted((i0, i1))
+        a = pts[lo:hi + 1]
+        b = np.vstack([pts[hi:], pts[:lo + 1]])
+        upper, lower = (a, b) if a[:, 1].mean() < b[:, 1].mean() else (b, a)
+        return upper[np.argsort(upper[:, 0])], lower[np.argsort(lower[:, 0])]
+
+    def teeth(self, svg):
+        """Dos filas de dientes: los de arriba van del labio superior a la mordida y los de
+        abajo de la mordida al labio inferior, así se separan al abrir la boca."""
+        face, EW, T = self.face, self.EW, TEETH
+        up_o, lo_o = self.lip_curves(face.lips_outer)
+        up_i, lo_i = self.lip_curves(face.lips_inner)
+        x0, x1 = up_o[0, 0], up_o[-1, 0]
+        ext, gap = T["ext"] * EW, T["gap"] * EW
+
+        def at(curve, x):
+            return np.interp(x, curve[:, 0], curve[:, 1])
+
+        def top(x):      # borde superior de los dientes de arriba (sobre el labio)
+            return at(up_o, x) - ext * (1 - 0.5 * ((x - (x0 + x1) / 2) / ((x1 - x0) / 2)) ** 2)
+
+        def bottom(x):   # borde inferior de los dientes de abajo
+            return at(lo_o, x) + ext * (1 - 0.5 * ((x - (x0 + x1) / 2) / ((x1 - x0) / 2)) ** 2)
+
+        xs = np.linspace(x0, x1, 40)
+        back = np.vstack([np.stack([xs, top(xs) - gap], 1), np.stack([xs[::-1], bottom(xs[::-1]) + gap], 1)])
+        svg.path("boca", bezier_d(resample(back, 48)), fill=INK, extra='id="encias"')
+
+        # Anchos: más grandes al centro, más chicos hacia las comisuras.
+        k = (np.arange(T["count"]) + 0.5) / T["count"]
+        w = 1 - 0.45 * np.abs(2 * k - 1)
+        edges = x0 + (x1 - x0) * np.concatenate([[0], np.cumsum(w) / w.sum()])
+        def tooth(xa, xb, ya, yb, round_out):
+            """Diente entre xa..xb; ya = borde hacia el labio, yb = borde de la mordida."""
+            w, h = xb - xa, abs(yb - ya)
+            r = min(0.35 * w, 0.4 * h)
+            ro = r if round_out else r * 0.5      # el borde de la encía, menos redondeado
+            sy = 1 if yb > ya else -1             # de arriba hacia abajo o al revés
+            return (f"M{xa:.1f},{ya + sy * ro:.1f}Q{xa:.1f},{ya:.1f} {xa + ro:.1f},{ya:.1f}"
+                    f"L{xb - ro:.1f},{ya:.1f}Q{xb:.1f},{ya:.1f} {xb:.1f},{ya + sy * ro:.1f}"
+                    f"L{xb:.1f},{yb - sy * r:.1f}Q{xb:.1f},{yb:.1f} {xb - r:.1f},{yb:.1f}"
+                    f"L{xa + r:.1f},{yb:.1f}Q{xa:.1f},{yb:.1f} {xa:.1f},{yb - sy * r:.1f}Z")
+
+        teeth = []
+        for xa, xb in zip(edges[:-1], edges[1:]):
+            xa, xb = xa + gap / 2, xb - gap / 2
+            xm = np.array([xa, (xa + xb) / 2, xb])
+            # Arriba: del labio superior a la mordida; abajo: de la mordida al labio inferior.
+            teeth.append(tooth(xa, xb, top(xm).max() + gap / 2, at(up_i, xm).min() - gap / 2, False))
+            teeth.append(tooth(xa, xb, bottom(xm).min() - gap / 2, at(lo_i, xm).max() + gap / 2, False))
+        svg.path("boca", "".join(teeth), fill=TOOTH, extra='id="dientes"')
+
     # frente: flor de cempasúchil al centro y papel picado arriba
     def forehead(self, svg, pal):
         face, EW = self.face, self.EW
@@ -490,8 +628,37 @@ class Design:
         oval_top = self.oval[:, 1].min()
         cx = P(face.nose_bridge)[:, 0].mean()
         cy = lerp(brow_top, oval_top, FLOWER["rise"])
+        self.vines(svg, (cx, float(cy)), FLOWER["radius"] * EW)
         self.marigold(svg, "frente", pal, (cx, float(cy)), FLOWER["radius"] * EW, "flor-frente")
         self.papel_picado(svg, pal, oval_top, brow_top)
+
+    def vines(self, svg, c, R):
+        """Hojas detrás de la flor y una enredadera hacia cada sien, con hojas y un rizo."""
+        EW, V = self.EW, VINES
+        c = np.asarray(c, float)
+        g = [f'<g id="hojas-frente" stroke="{INK}" stroke-width="{OUTLINE * EW:.1f}" stroke-linejoin="round">']
+        for j, deg in enumerate((-150, -110, -70, -30, 30, 150)):
+            a = math.radians(deg)
+            base = c + 0.75 * R * np.array([math.cos(a), math.sin(a)])
+            g.append(f'  <path d="{leaf_d(0.75 * R, 0.24 * R)}" fill="{LEAF[j % 2]}" transform="{place(*base, a)}"/>')
+        for sx, n in ((-1, "right"), (1, "left")):
+            ctrl = [c + R * np.array([sx * x, y]) for x, y in ((0.9, 0.25), (1.7, -0.15), (2.5, 0.05), (3.0, -0.35))]
+            stem = resample(catmull(ctrl, False, 16), 40, closed=False)
+            end = stem[-1]
+            curl = spiral_pts(end + np.array([0, 0.28 * R]), 0.28 * R, 0.06 * R, -math.pi / 2, 0.9 * sx, 1, 30)
+            svg.path("frente", bezier_d(resample(np.vstack([stem, curl[1:]]), 24, closed=False), closed=False),
+                     stroke=VINE, width=V["stroke"] * EW, extra=f'id="enredadera-{n}"')
+            tang = np.gradient(stem, axis=0)
+            for k, t in enumerate((0.2, 0.42, 0.64, 0.84)):
+                i = int(t * (len(stem) - 1))
+                tx, ty = tang[i] / np.linalg.norm(tang[i])
+                up = 1 if k % 2 else -1
+                a = math.atan2(ty, tx) + up * math.radians(55) * sx
+                L = V["leaves"] * R * (0.55 - 0.08 * k)
+                g.append(f'  <path d="{leaf_d(L, L * V["leaf_w"])}" fill="{LEAF[(k + 1) % 2]}" '
+                         f'transform="{place(*stem[i], a)}"/>')
+        g.append("</g>")
+        svg.add("frente", "\n    ".join(g))
 
     def marigold(self, svg, layer, pal, c, R, name):
         rings = [(1.00, 14, "petal_a"), (0.80, 12, "petal_b"), (0.60, 10, "petal_a"), (0.40, 8, "petal_b")]
@@ -566,20 +733,17 @@ class Design:
     # mejillas: voluta en espiral con cola hacia la boca y puntos decorativos
     def cheek(self, svg, pal, side):
         face, EW = self.face, self.EW
-        eye = side.P(face.eye["right"])
-        eye_outer = eye[np.argmin(side.sx * -eye[:, 0])]      # comisura externa del ojo
-        mouth = side.P(self.mouth_corner["right"])
-        mid = lerp(eye_outer, mouth, 0.5)
-        oval = self.oval[(self.oval[:, 0] - SIZE / 2) * side.sx > 0]
-        edge = oval[np.argmin(np.abs(oval[:, 1] - mid[1]))]
-        c = lerp(mid, edge, CHEEK["out"])
+        S = self.skull_points(side)
+        sock = self.socket(side)
+        sock_out = sock[np.argmax(side.sx * sock[:, 0] + sock[:, 1])]   # abajo y afuera de la cuenca
+        c = lerp(S["cheek"], sock_out, CHEEK["out"]) + np.array([0.0, 0.15 * EW])
 
         r1 = CHEEK["spiral"] * EW
         turns = CHEEK["turns"]
         a_end = math.pi / 2                                   # termina abajo...
         spiral = spiral_pts(c, 0.12 * r1, r1, a_end - 2 * math.pi * turns, turns, side.sx)
         end = spiral[-1]
-        tail_end = lerp(c, mouth, 0.42) + np.array([0, 0.25 * r1])   # ...y la cola sigue hacia la boca
+        tail_end = lerp(c, S["notch"], 0.62)                          # ...y la cola baja hacia la muesca
         tail = catmull([end, lerp(end, tail_end, 0.5) + np.array([0, 0.45 * r1]), tail_end],
                        closed=False, n=16)
         curve = np.vstack([spiral, tail[1:]])
@@ -632,7 +796,7 @@ class Design:
         svg.path("transparencias", poly_d(P(self.face.lips_inner)), fill=HOLE, extra='id="hueco-boca"')
 
 
-LAYERS = ["base", "huesos", "frente", "mejillas", "menton", "nariz", "boca", "ojos", "transparencias", "referencia"]
+LAYERS = ["base", "huesos", "craneo", "frente", "mejillas", "menton", "nariz", "boca", "ojos", "transparencias", "referencia"]
 
 
 def preview(paths, out, size=1024, bg=(92, 78, 70)):

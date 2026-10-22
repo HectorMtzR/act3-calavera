@@ -50,7 +50,7 @@ Plantilla UV → guía de rasgos → SVG anclado a landmarks → rasterizado →
 
 Los contornos de los rasgos salen de los conjuntos oficiales de conexiones de MediaPipe
 (`FaceLandmarksConnections`), no de índices escritos a mano. El SVG está organizado en capas
-con nombre (`base`, `huesos`, `frente`, `mejillas`, `menton`, `nariz`, `boca`, `ojos`,
+con nombre (`base`, `huesos`, `craneo`, `frente`, `mejillas`, `menton`, `nariz`, `boca`, `ojos`,
 `transparencias`) para retocarlo en Inkscape, Figma o Illustrator.
 
 ![Guía UV](assets/face/uv_guide.png)
