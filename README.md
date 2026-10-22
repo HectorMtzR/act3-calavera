@@ -14,8 +14,11 @@ facial de precisión_. Parte del filtro de la Actividad 2 (Máscara de Lava AR).
 
 | Gesto | Efecto |
 |---|---|
-| **Abrir la boca** | Lluvia de pétalos de cempasúchil 🌼 |
-| **Levantar las cejas** | Cambio de paleta de la calavera 🎨 |
+| **Abrir la boca** | Lluvia de pétalos de cempasúchil 🌼: caen desde arriba de la cabeza girando y balanceándose, y algunos salen de la boca, con campanitas y viento ligero. |
+| **Levantar las cejas** | Cambio de paleta 🎨: la calavera pasa a flores moradas y rosas, papel picado naranja y amarillo y volutas doradas (y de regreso), con una transición suave de 0.6 s. |
+
+Toca la pantalla o el botón 🔇 para activar el sonido (los navegadores lo bloquean hasta
+la primera interacción).
 
 Parámetros de URL para revisión:
 - `?template=1`: muestra la plantilla UV sobre la cara.
@@ -47,6 +50,7 @@ Plantilla UV → guía de rasgos → SVG anclado a landmarks → rasterizado →
 | 3. Diseño SVG | `tools/03_generate_svg.py` | `design/calavera.svg`, `design/calavera_alt.svg` |
 | 4. Rasterizado | `tools/04_rasterize.py` | `assets/mask/calavera.png`, `calavera_alt.png` (alfa, borde suave, padding) |
 | 5. Vista previa 3D | `tools/05_preview_blender.py` (Blender) | `docs/screenshots/preview_*.png` |
+| Pétalo (partículas) | `tools/06_petal.py` | `assets/particles/petal.png` |
 
 Los contornos de los rasgos salen de los conjuntos oficiales de conexiones de MediaPipe
 (`FaceLandmarksConnections`), no de índices escritos a mano. El SVG está organizado en capas
@@ -81,6 +85,7 @@ blender --background --factory-startup --python tools/01_uv_template.py
 python tools/02_uv_guide.py
 python tools/03_generate_svg.py
 python tools/04_rasterize.py
+python tools/06_petal.py
 blender --background --factory-startup --python tools/05_preview_blender.py
 blender --background --factory-startup --python tools/05_preview_blender.py -- calavera_alt
 ```
@@ -115,7 +120,8 @@ docs/           imágenes del README
 |---|---|---|
 | Malla canónica y modelo Face Landmarker | [MediaPipe](https://github.com/google-ai-edge/mediapipe) (Google) | Apache 2.0 |
 | three.js | [threejs.org](https://threejs.org/) | MIT |
-| Diseño de la calavera | Propio | Propio |
+| Diseño de la calavera y pétalo | Propio | Propio |
+| Sonidos (campanitas, viento, brillo) | Sintetizados con Web Audio en `js/audio.js` | Propios |
 
 ## Autor
 

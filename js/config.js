@@ -31,14 +31,32 @@ export const CONFIG = {
   // Histéresis: tras disparar, el gesto se rearma cuando baja de threshold * GESTURE_RELEASE.
   GESTURE_RELEASE: 0.8,
 
-  // --- Efectos (Fase 5) ---
-  PETALS: { count: 80, duration: 2.0 },
-  PALETTE_TRANSITION: 0.6,     // s
+  // --- Efectos ---
+  // Lluvia de pétalos (boca abierta). Distancias en "anchos de cara" (entre las comisuras
+  // externas de los ojos), así el efecto escala con lo cerca que esté la persona.
+  PETALS: {
+    count: 80,               // pétalos que caen desde arriba de la cabeza
+    mouth: 12,               // pétalos extra que salen de la boca
+    duration: 2.0,           // s, duración de la lluvia
+    sprite: "assets/particles/petal.png",
+    size: [0.22, 0.38],      // tamaño de cada pétalo
+    spread: 1.8,             // ancho de la zona de donde caen (a cada lado del centro)
+    height: [0.6, 1.6],      // altura sobre la frente donde aparecen
+    gravity: 1.4,
+    terminal: 1.5,           // velocidad máxima de caída
+    sway: 0.45,              // balanceo lateral
+    mouthSpeed: [1.6, 2.6],
+  },
+  PALETTE_TRANSITION: 0.6,   // s, cambio de paleta (uMix 0 <-> 1)
 
   // --- Audio ---
   EFFECT_VOLUME: 0.9,
-  // Archivos de sonido por nombre de efecto (p. ej. petals: "assets/sounds/petals.mp3").
-  SOUNDS: {},
+  // Archivos de sonido opcionales por efecto (p. ej. "assets/sounds/petals.mp3"). Con null
+  // se usa el sonido sintetizado con Web Audio (campanitas y viento / brillo).
+  SOUNDS: {
+    petals: null,
+    palette: null,
+  },
 
   // --- MediaPipe Face Landmarker ---
   MEDIAPIPE: {
