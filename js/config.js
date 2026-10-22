@@ -7,6 +7,7 @@ export const CONFIG = {
   // --- Malla facial ---
   FACE_MODEL: "assets/face/canonical_face_model.obj",
   UV_TEMPLATE: "assets/face/uv_template.png",
+  UV_GUIDE: "assets/face/uv_guide.png",        // contornos de ojos, labios, nariz y cara
 
   // --- Máscara ---
   MASK_SHEET: "assets/mask/lava_sheet.png",

@@ -11,9 +11,12 @@ import { unlockAudio, isUnlocked, setMuted, isMuted, startAmbient } from "./audi
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get("debug") === "1";
-// ?template=1 muestra la plantilla UV en lugar de la lava (para revisar la alineación).
-const MASK_SHEET = params.get("template") === "1"
-  ? { url: CONFIG.UV_TEMPLATE, grid: 1, frames: 1 }
+// ?template=1 muestra la plantilla UV y ?guide=1 la guía con los contornos de los rasgos
+// en lugar de la máscara (para revisar la alineación).
+const STATIC_TEXTURE = params.get("guide") === "1" ? CONFIG.UV_GUIDE
+  : params.get("template") === "1" ? CONFIG.UV_TEMPLATE : null;
+const MASK_SHEET = STATIC_TEXTURE
+  ? { url: STATIC_TEXTURE, grid: 1, frames: 1 }
   : { url: CONFIG.MASK_SHEET, grid: CONFIG.SHEET_GRID, frames: CONFIG.SHEET_FRAMES };
 const NUM_MESH_POINTS = 478; // 468 de la cara + 10 del iris
 

@@ -1,0 +1,5 @@
+# Herramientas de la textura (Python 3.10+). Los scripts 01 y 05 corren dentro de Blender.
+numpy
+pillow
+mediapipe     # conjuntos oficiales de conexiones (FaceLandmarksConnections)
+resvg-py      # rasterizado SVG -> PNG

@@ -2,7 +2,8 @@
 .git/
 .wrangler/
 node_modules/
-blender/
+tools/
+design/
 docs/
 *.md
 wrangler.jsonc

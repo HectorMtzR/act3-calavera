@@ -2,9 +2,9 @@
 01 — Plantilla UV de la malla canónica de MediaPipe.
 
 Uso (desde la raíz del repo):
-    blender --background --factory-startup --python blender/01_uv_template.py
+    blender --background --factory-startup --python tools/01_uv_template.py
 
-Salida: assets/face/uv_template.png (1024x1024, PNG con transparencia).
+Salida: assets/face/uv_template.png (2048x2048, PNG con transparencia).
 
 Primero intenta `bpy.ops.uv.export_layout`. Si falla en modo terminal (necesita contexto
 de edición / GPU), dibuja los triángulos UV directamente con numpy.
@@ -18,11 +18,11 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OBJ_PATH = os.path.join(ROOT, "assets", "face", "canonical_face_model.obj")
 OUT_PATH = os.path.join(ROOT, "assets", "face", "uv_template.png")
-SIZE = 1024
+SIZE = 2048
 
 FILL_RGBA = (1.0, 0.55, 0.1, 0.35)   # relleno de cada triángulo (naranja translúcido)
 EDGE_RGBA = (0.08, 0.02, 0.0, 0.95)  # aristas casi negras (contraste sobre la piel)
-EDGE_PX = 2.5                        # grosor de las aristas (en cámara la textura se reduce ~3x)
+EDGE_PX = 5.0                        # grosor de las aristas (en cámara la textura se reduce ~6x)
 
 
 def import_canonical_mesh():
