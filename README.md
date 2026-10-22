@@ -32,8 +32,8 @@ Plantilla UV → guía de rasgos → SVG anclado a landmarks → rasterizado →
 | 1. Plantilla UV | `tools/01_uv_template.py` (Blender) | `assets/face/uv_template.png` |
 | 2. Guía de rasgos | `tools/02_uv_guide.py` | `assets/face/uv_guide.png` |
 | 3. Diseño SVG | `tools/03_generate_svg.py` | `design/calavera.svg`, `design/calavera_alt.svg` |
-| 4. Rasterizado | `tools/04_rasterize.py` _(Fase 3)_ | `assets/mask/calavera.png`, `calavera_alt.png` |
-| 5. Vista previa 3D | `tools/05_preview_blender.py` _(Fase 3)_ | `docs/screenshots/` |
+| 4. Rasterizado | `tools/04_rasterize.py` | `assets/mask/calavera.png`, `calavera_alt.png` (alfa, borde suave, padding) |
+| 5. Vista previa 3D | `tools/05_preview_blender.py` (Blender) | `docs/screenshots/preview_*.png` |
 
 Los contornos de los rasgos salen de los conjuntos oficiales de conexiones de MediaPipe
 (`FaceLandmarksConnections`), no de índices escritos a mano. El SVG está organizado en capas
@@ -42,6 +42,11 @@ con nombre (`base`, `frente`, `mejillas`, `menton`, `nariz`, `boca`, `ojos`,
 
 ![Guía UV](assets/face/uv_guide.png)
 ![Diseño](docs/textura/03_diseno.png)
+![Textura](docs/textura/04_textura.png)
+
+| ¾ derecho | Frente | ¾ izquierdo |
+|---|---|---|
+| ![](docs/screenshots/preview_calavera_3q_der.png) | ![](docs/screenshots/preview_calavera_frente.png) | ![](docs/screenshots/preview_calavera_3q_izq.png) |
 
 ## Ejecución local
 
@@ -62,7 +67,12 @@ Requisitos: Blender 4.x y Python 3.10+ con `pip install -r tools/requirements.tx
 blender --background --factory-startup --python tools/01_uv_template.py
 python tools/02_uv_guide.py
 python tools/03_generate_svg.py
+python tools/04_rasterize.py
+blender --background --factory-startup --python tools/05_preview_blender.py
+blender --background --factory-startup --python tools/05_preview_blender.py -- calavera_alt
 ```
+
+Si retocas a mano los SVG de `design/`, corre solo los pasos 4 y 5 (el 3 los sobrescribe).
 
 Si `blender` no está en el PATH, usa la ruta completa
 (Windows: `"C:\Program Files\Blender Foundation\Blender 4.3\blender.exe"`).
