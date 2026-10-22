@@ -20,8 +20,21 @@ facial de precisión_. Parte del filtro de la Actividad 2 (Máscara de Lava AR).
 Parámetros de URL para revisión:
 - `?template=1`: muestra la plantilla UV sobre la cara.
 - `?guide=1`: muestra la guía con los contornos de ojos, labios, nariz y cara.
-- `?debug=1`: puntos de los landmarks, valores de los blendshapes y teclas `B` (pétalos) y
-  `P` (paleta) para disparar los efectos sin hacer el gesto.
+- `?debug=1`: contornos de ojos, cejas, labios y cara en tiempo real (suavizados), puntos
+  de los landmarks crudos, valores de los blendshapes y temblor medido (px por cuadro).
+  Teclas: `B` pétalos, `P` paleta, `S` activa/desactiva el suavizado.
+- `?smooth=0`: sin suavizado de landmarks (para comparar).
+
+## Precisión
+
+- **Suavizado One Euro** por landmark (`js/face.js`), en píxeles del video: quita el
+  temblor en reposo sin retrasar los movimientos rápidos. Parámetros en `CONFIG.SMOOTHING`.
+- **Huecos exactos:** la malla canónica también tiene triángulos sobre los ojos y el
+  interior de la boca. Se quitan los que tienen sus 3 vértices sobre un mismo contorno
+  (14 por ojo, 18 en la boca), así ojos y boca reales siempre se ven, sin depender del
+  filtrado de la textura.
+- **Textura:** 2048 px con mipmaps, filtrado trilineal y anisotropía al máximo del
+  dispositivo, en sRGB.
 
 ## Proceso de la textura
 

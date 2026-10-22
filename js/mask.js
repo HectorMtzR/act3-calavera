@@ -2,6 +2,7 @@
 // posiciones actualizadas cada cuadro con los landmarks detectados.
 // El shader mezcla dos texturas (paleta principal y alternativa) con `uMix`.
 import * as THREE from "three";
+import { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { CONFIG } from "./config.js";
 
 /**
@@ -32,20 +33,82 @@ function parseCanonicalObj(text) {
   return { numVerts, uvs, indices };
 }
 
-async function loadTexture(url) {
+/** Encadena las aristas de un conjunto de conexiones de MediaPipe en contornos cerrados. */
+function chainLoops(connections) {
+  const adj = new Map();
+  const link = (a, b) => (adj.get(a) ?? adj.set(a, []).get(a)).push(b);
+  for (const { start, end } of connections) {
+    link(start, end);
+    link(end, start);
+  }
+  const seen = new Set();
+  const loops = [];
+  for (const s of adj.keys()) {
+    if (seen.has(s)) continue;
+    const loop = [];
+    let prev = -1;
+    let cur = s;
+    while (cur !== undefined && !seen.has(cur)) {
+      seen.add(cur);
+      loop.push(cur);
+      const next = adj.get(cur).find((n) => n !== prev && !seen.has(n));
+      prev = cur;
+      cur = next;
+    }
+    loops.push(loop);
+  }
+  return loops;
+}
+
+function uvArea(loop, uvs) {
+  let a = 0;
+  for (let k = 0; k < loop.length; k++) {
+    const i = loop[k];
+    const j = loop[(k + 1) % loop.length];
+    a += uvs[i * 2] * uvs[j * 2 + 1] - uvs[j * 2] * uvs[i * 2 + 1];
+  }
+  return Math.abs(a / 2);
+}
+
+/**
+ * La malla canónica está triangulada también sobre los ojos y el interior de la boca.
+ * Esos triángulos son exactamente los que tienen sus 3 vértices sobre un mismo contorno
+ * (ojo izquierdo, ojo derecho o interior de los labios); se quitan del índice.
+ */
+function removeHoleTriangles(indices, uvs) {
+  const [inner] = chainLoops(FaceLandmarker.FACE_LANDMARKS_LIPS).sort((a, b) => uvArea(a, uvs) - uvArea(b, uvs));
+  const holes = [
+    new Set(chainLoops(FaceLandmarker.FACE_LANDMARKS_LEFT_EYE)[0]),
+    new Set(chainLoops(FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE)[0]),
+    new Set(inner),
+  ];
+  const kept = [];
+  for (let f = 0; f < indices.length; f += 3) {
+    const tri = [indices[f], indices[f + 1], indices[f + 2]];
+    if (!holes.some((h) => tri.every((v) => h.has(v)))) kept.push(...tri);
+  }
+  console.info(`[mask] huecos de ojos y boca: ${(indices.length - kept.length) / 3} triángulos fuera`);
+  return new Uint16Array(kept);
+}
+
+async function loadTexture(url, renderer) {
   const tex = await new THREE.TextureLoader().loadAsync(url);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  // Mipmaps + filtrado trilineal y anisotrópico: nítida de cerca y sin parpadeo de lejos.
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return tex;
 }
 
 /** Carga la textura; si no existe todavía, usa la plantilla UV. */
-async function loadTextureOrTemplate(url) {
+async function loadTextureOrTemplate(url, renderer) {
   try {
-    return await loadTexture(url);
+    return await loadTexture(url, renderer);
   } catch (err) {
     console.warn(`[mask] no se pudo cargar ${url}; se usa la plantilla UV`, err);
-    return loadTexture(CONFIG.UV_TEMPLATE);
+    return loadTexture(CONFIG.UV_TEMPLATE, renderer);
   }
 }
 
@@ -75,18 +138,20 @@ const fragmentShader = /* glsl */ `
 /**
  * Crea la máscara y la agrega a la escena (oculta hasta que haya rostro).
  * `textures`: { a, b } rutas de las dos paletas (pueden ser la misma).
+ * `cutHoles`: quitar los triángulos de ojos y boca (con la plantilla o la guía conviene verlos).
  * Devuelve { mesh, uniforms, update(landmarks, landmarkToWorld), hide() }.
  */
-export async function createMask(scene, textures) {
+export async function createMask(scene, renderer, textures, cutHoles = CONFIG.MASK_CUT_HOLES) {
   const [objText, texA, texB] = await Promise.all([
     fetch(CONFIG.FACE_MODEL).then((r) => {
       if (!r.ok) throw new Error(`No se pudo cargar ${CONFIG.FACE_MODEL} (${r.status})`);
       return r.text();
     }),
-    loadTextureOrTemplate(textures.a),
-    textures.b === textures.a ? null : loadTextureOrTemplate(textures.b),
+    loadTextureOrTemplate(textures.a, renderer),
+    textures.b === textures.a ? null : loadTextureOrTemplate(textures.b, renderer),
   ]);
-  const { numVerts, uvs, indices } = parseCanonicalObj(objText);
+  const { numVerts, uvs, indices: allIndices } = parseCanonicalObj(objText);
+  const indices = cutHoles ? removeHoleTriangles(allIndices, uvs) : allIndices;
 
   const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(numVerts * 3);

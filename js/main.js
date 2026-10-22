@@ -1,5 +1,6 @@
 // Arranque: cámara frontal, MediaPipe y render loop.
 import * as THREE from "three";
+import { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { CONFIG } from "./config.js";
 import { createFaceTracker } from "./face.js";
 import { createScene } from "./scene.js";
@@ -17,6 +18,7 @@ const STATIC_TEXTURE = params.get("guide") === "1" ? CONFIG.UV_GUIDE
 const MASK_TEXTURES = STATIC_TEXTURE
   ? { a: STATIC_TEXTURE, b: STATIC_TEXTURE }
   : { a: CONFIG.MASK_A, b: CONFIG.MASK_B };
+const SMOOTH = params.get("smooth") !== "0";
 const NUM_MESH_POINTS = 478; // 468 de la cara + 10 del iris
 
 const video = document.getElementById("video");
@@ -86,7 +88,40 @@ function explainCameraError(err) {
   }
 }
 
-// ---------- Puntos de landmarks (solo con ?debug=1) ----------
+// ---------- Depuración visual (solo con ?debug=1) ----------
+// Contornos de ojos, cejas, labios y cara con los landmarks suavizados (lo que sigue la
+// máscara) y puntos blancos con los landmarks crudos de MediaPipe.
+function createContours() {
+  const segments = [];
+  const color = new THREE.Color();
+  const colors = [];
+  for (const [name, hex] of Object.entries(CONFIG.DEBUG_CONTOURS)) {
+    color.setHex(hex);
+    for (const { start, end } of FaceLandmarker[`FACE_LANDMARKS_${name}`]) {
+      segments.push(start, end);
+      colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(segments.length * 3), 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const lines = new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true }),
+  );
+  lines.frustumCulled = false;
+  lines.renderOrder = 11;
+  lines.visible = false;
+  lines.userData.segments = segments;
+  return lines;
+}
+
+function updateContours(lines, landmarks, toWorld) {
+  const attr = lines.geometry.attributes.position;
+  lines.userData.segments.forEach((idx, k) => toWorld(landmarks[idx], attr.array, k * 3));
+  attr.needsUpdate = true;
+}
+
 function createLandmarkPoints() {
   const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(NUM_MESH_POINTS * 3);
@@ -148,7 +183,7 @@ function meter(value, threshold, width = 14) {
   return s;
 }
 
-function createDebugPanel(delegate, gestures) {
+function createDebugPanel(tracker, gestures) {
   if (!DEBUG) return () => {};
   show(ui.debug, true);
   let frames = 0;
@@ -163,16 +198,18 @@ function createDebugPanel(delegate, gestures) {
       last = now;
     }
     const lines = [
-      `fps ${fps.toFixed(0)} · ${delegate}`,
+      `fps ${fps.toFixed(0)} · ${tracker.delegate}`,
       `video ${video.videoWidth}×${video.videoHeight}`,
       `cara ${face ? `sí (${face.landmarks.length} pts)` : "no"}`,
+      `suavizado ${tracker.smoothing.enabled ? "sí" : "no"} · temblor px/cuadro: ` +
+        `crudo ${tracker.jitter.raw.toFixed(2)} → ${tracker.jitter.smooth.toFixed(2)}`,
       "",
     ];
     for (const [name, { threshold }] of Object.entries(CONFIG.GESTURES)) {
       const g = gestures.state[name];
       lines.push(`${name.padEnd(11)} ${g.value.toFixed(2)} ${meter(g.value, threshold)} ×${g.count}`);
     }
-    lines.push("", "teclas: B pétalos · P paleta");
+    lines.push("", "líneas = suavizado · puntos = crudo", "teclas: B pétalos · P paleta · S suavizado");
     ui.debug.textContent = lines.join("\n");
   };
 }
@@ -184,7 +221,9 @@ async function main() {
   // La cámara, el modelo y la malla se cargan en paralelo.
   const view = createScene(canvas, video);
   const trackerPromise = createFaceTracker();
-  const maskPromise = createMask(view.scene, MASK_TEXTURES);
+  // Con la plantilla o la guía se dibuja la malla completa (también sobre ojos y boca).
+  const maskPromise = createMask(view.scene, view.renderer, MASK_TEXTURES,
+    !STATIC_TEXTURE && CONFIG.MASK_CUT_HOLES);
   const effectsPromise = maskPromise.then((mask) =>
     createEffects({ scene: view.scene, renderer: view.renderer, mask })
   );
@@ -221,16 +260,19 @@ async function main() {
   show(ui.hint, true);
   view.resize(); // el video ya tiene tamaño real
 
+  tracker.smoothing.enabled = SMOOTH && CONFIG.SMOOTHING.enabled;
   const gestures = createGestureDetector();
   const points = DEBUG ? createLandmarkPoints() : null;
-  if (points) view.scene.add(points);
-  const updateDebug = createDebugPanel(tracker.delegate, gestures);
+  const contours = DEBUG ? createContours() : null;
+  if (points) view.scene.add(points, contours);
+  const updateDebug = createDebugPanel(tracker, gestures);
   if (DEBUG) {
-    // Disparar los efectos con el teclado, sin hacer el gesto.
+    // Disparar los efectos con el teclado, sin hacer el gesto; S alterna el suavizado.
     window.addEventListener("keydown", (e) => {
       const t = performance.now() / 1000;
       if (e.key === "b") effects.trigger("jawOpen", t);
       if (e.key === "p") effects.trigger("browInnerUp", t);
+      if (e.key === "s") tracker.smoothing.enabled = !tracker.smoothing.enabled;
     });
   }
 
@@ -240,13 +282,16 @@ async function main() {
     if (face) {
       mask.update(face.landmarks, view.landmarkToWorld);
       for (const gesture of gestures.update(face.blendshapes, t)) effects.trigger(gesture, t);
-      if (points) updateLandmarkPoints(points, face.landmarks, view.landmarkToWorld);
+      if (points) {
+        updateLandmarkPoints(points, face.raw, view.landmarkToWorld);
+        updateContours(contours, face.landmarks, view.landmarkToWorld);
+      }
     } else {
       mask.hide();
       gestures.reset();
     }
     effects.update(t, face ? face.landmarks : null, view.landmarkToWorld);
-    if (points) points.visible = !!face;
+    if (points) points.visible = contours.visible = !!face;
     show(ui.noFace, !face);
     updateDebug(face);
     view.render();
